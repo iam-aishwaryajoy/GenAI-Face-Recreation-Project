@@ -53,12 +53,18 @@ def show(tensor, name, ch=1, size=(28, 28), num=16):
         Nrows is the number of rows from 16.
         Permute is the reshape function.
     '''
-    resized_tensor = tensor#F.interpolate(tensor, size=(28, 28), mode='bilinear', align_corners=False)
-    # print("Shape after resizing:", resized_tensor.shape)  # Check the shape after resizing
-    data = resized_tensor.detach().cpu().view(-1, ch, *size)  # 128 x 1 x 28 x 28
-    grid = make_grid(data[:num], nrow=4).permute(1, 2, 0)  # 1 x 28 x 28  = 28 x 28 x 1
-    plt.imshow(grid, cmap="gray")
+    # resized_tensor = tensor#F.interpolate(tensor, size=(28, 28), mode='bilinear', align_corners=False)
+    # # print("Shape after resizing:", resized_tensor.shape)  # Check the shape after resizing
+    # data = resized_tensor.detach().cpu().view(-1, ch, *size)  # 128 x 1 x 28 x 28
+    # grid = make_grid(data[:num], nrow=4).permute(1, 2, 0)  # 1 x 28 x 28  = 28 x 28 x 1
+    # plt.imshow(grid, cmap="gray")
+    # plt.savefig(name)
+
+    single_image = tensor[0].detach().cpu().view(ch, *size)  # Choose index 0 for the first image
+    plt.imshow(single_image.squeeze().numpy(), cmap="gray")
+    plt.axis('off')
     plt.savefig(name)
+    plt.show()
 
 
 def load_noise_as_tensor(image_path):
@@ -66,7 +72,7 @@ def load_noise_as_tensor(image_path):
     transform = transforms.Compose([
         transforms.Resize((128, 64)),  # Resize image to match model input size
         transforms.ToTensor(),  # Convert image to PyTorch tensor
-        # transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1] if using Tanh in output
+        #transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1] if using Tanh in output
     ])
     image = Image.open(image_path).convert('L')  # Convert to grayscale if required by the model
     image_tensor = transform(image)

@@ -1,93 +1,93 @@
-# Import the libraries
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from torch import nn
 from torchvision import transforms
-from torchvision.datasets import MNIST
-from torchvision.utils import make_grid
-from tqdm.auto import tqdm
 import matplotlib.pyplot as plt
-import torch.nn.functional as F
 from PIL import Image
-from torchvision import transforms
+import os
+from datetime import datetime
+
+# Hyperparameters:
+img_size = 128
+img_hw = img_size * img_size * 3  # For color images (3 channels)
 
 # Parameters
-epochs = 20
+epochs = 20  # Number of complete passes over the dataset
 cur_step = 0
-info_step = 5  # Current information printing
+info_step = 5  # Interval for printing information
 mean_gen_loss = 0
 mean_disc_loss = 0
-z_dim = 64 # Change this to match the input dimension
+z_dim = img_hw  # Latent space dimension
 lr = 0.00001
 loss_func = nn.BCEWithLogitsLoss()
-bs = 128 # Batch size
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+bs = 16  # Batch size
 
-def show(tensor, name, ch=1, size=(28, 28)):
-    ''' Visualizes a single image tensor.
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+output_dir = f'output/output_{timestamp}/'
+os.makedirs(output_dir, exist_ok=True)
+
+# Visualization function
+def show(tensor_batch, prefix, size=(img_size, img_size)):
+    ''' Visualizes a batch of image tensors.
     Detach the tensor and store it inside CPU.
     '''
-    # Select the first image from the batch (or any specific image index)
-    single_image = tensor[0].detach().cpu().view(ch, *size)  # Choose index 0 for the first image
-    plt.imshow(single_image.squeeze().numpy(), cmap="gray")
-    plt.axis('off')
-    plt.savefig(name)
-    plt.show()
-    
-def calc_gen_loss(loss_func, gen, disc, number, z_dim, noise): #number - no of elements need to process, z_dim = latent space dim
-   fake = gen(noise)
-   pred = disc(fake)
-   targets=torch.ones_like(pred)
-   gen_loss=loss_func(pred,targets)
+    batch_size = tensor_batch.size(0)  # Get the number of images in the batch
+    for i in range(batch_size):
+        single_image = tensor_batch[i].detach().cpu().view(3, *size).permute(1, 2, 0)
+        plt.imshow(single_image.numpy() * 0.5 + 0.5)  # Unnormalize
+        plt.axis('off')
+        fname = str(output_dir) + f'{prefix}_{i}.jpg'
+        plt.savefig(fname)  # Save each image with an index
+        plt.show()
 
-   return gen_loss
+# Custom Dataset Class
+class FaceDataset(Dataset):
+    def __init__(self, eyes_dir, faces_dir, transform=None):
+        self.eyes_dir = eyes_dir
+        self.faces_dir = faces_dir
+        self.transform = transform
+        self.eyes_images = sorted(os.listdir(eyes_dir))
+        self.faces_images = sorted(os.listdir(faces_dir))
 
+    def __len__(self):
+        return len(self.eyes_images)
 
-def calc_disc_loss(loss_func, gen, disc, number, real, z_dim, noise):
-   fake = gen(noise)
-   disc_fake = disc(fake.detach()) #Detach is used so that we donot change parameters of generator, we only need to change parameters of discriminator.
-   disc_fake_targets=torch.zeros_like(disc_fake)
-   disc_fake_loss=loss_func(disc_fake, disc_fake_targets)
+    def __getitem__(self, idx):
+        eyes_path = os.path.join(self.eyes_dir, self.eyes_images[idx])
+        face_path = os.path.join(self.faces_dir, self.faces_images[idx])
 
-   disc_real = disc(real)
-   disc_real_targets=torch.ones_like(disc_real)
-   disc_real_loss=loss_func(disc_real, disc_real_targets)
+        eyes_image = Image.open(eyes_path).convert('RGB')  # Convert to RGB
+        face_image = Image.open(face_path).convert('RGB')  # Convert to RGB
 
-   disc_loss=(disc_fake_loss+disc_real_loss)/2
+        if self.transform:
+            eyes_image = self.transform(eyes_image)
+            face_image = self.transform(face_image)
 
-   return disc_loss
+        return eyes_image, face_image
 
+# Transformations
+transform = transforms.Compose([
+    transforms.Resize((img_size, img_size)),  # Resize to match model input size
+    transforms.ToTensor(),  # Convert to PyTorch tensor
+    transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1]
+])
 
-def load_noise_as_tensor(image_path):
-    transform = transforms.Compose([
-        transforms.Resize((28, 28)),  # Resize image to fit input dimension for generator
-        transforms.ToTensor(),  # Convert image to PyTorch tensor
-        transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1]
-    ])
-    image = Image.open(image_path).convert('L')  # Ensure grayscale
-    image_tensor = transform(image)
-    image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
-    return image_tensor
-
-def load_image_as_tensor(image_path):
-    transform = transforms.Compose([
-        transforms.Resize((28, 28)),  # Resize image to fit output dimension of generator
-        transforms.ToTensor(),  # Convert image to PyTorch tensor
-        transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1]
-    ])
-    image = Image.open(image_path).convert('L')  # Ensure grayscale
-    image_tensor = transform(image)
-    image_tensor = image_tensor.unsqueeze(0)  # Add batch dimension
-    return image_tensor
+# Load the dataset
+eyes_dir = 'data/noise/'  # Directory containing eyes images
+faces_dir = 'data/real/'  # Directory containing face images
+dataset = FaceDataset(eyes_dir, faces_dir, transform=transform)
+dataloader = DataLoader(dataset, batch_size=bs, shuffle=True)
 
 # Generator
 def genBlock(inp, out):
     return nn.Sequential(
         nn.Linear(inp, out),
-        #nn.BatchNorm1d(out),
-        nn.LayerNorm(out),  # Use LayerNorm instead of BatchNorm1d
-        nn.ReLU(inplace=True)  # For complex information capturing
+        nn.BatchNorm1d(out),
+        # nn.LayerNorm(out),  # Use LayerNorm instead of BatchNorm1d
+        nn.ReLU(inplace=True)
     )
+
 # Discriminator
 def discBlock(inp, out):
     return nn.Sequential(
@@ -96,7 +96,7 @@ def discBlock(inp, out):
     )
 
 class Generator(nn.Module):
-    def __init__(self, z_dim=64, i_dim=784, h_dim=128):  # Modify dimensions if necessary
+    def __init__(self, z_dim=img_hw, i_dim=img_hw, h_dim=128):
         super().__init__()
         self.gen = nn.Sequential(
             genBlock(z_dim, h_dim),
@@ -104,62 +104,83 @@ class Generator(nn.Module):
             genBlock(h_dim * 2, h_dim * 4),
             genBlock(h_dim * 4, h_dim * 8),
             nn.Linear(h_dim * 8, i_dim),
-            nn.Tanh()  # Use Tanh to output values between -1 and 1
+            nn.Tanh()
         )
 
     def forward(self, noise):
         return self.gen(noise)
 
 class Discriminator(nn.Module):
-    def __init__(self, i_dim=784, h_dim=256):
+    def __init__(self, i_dim=img_hw, h_dim=256):
         super().__init__()
         self.disc = nn.Sequential(
-            discBlock(i_dim, h_dim * 4),  # 784, 1024
-            discBlock(h_dim * 4, h_dim * 2),  # 1024, 512
-            discBlock(h_dim * 2, h_dim),  # 512, 256
-            nn.Linear(h_dim, 1)  # 256, 1
+            discBlock(i_dim, h_dim * 4),
+            discBlock(h_dim * 4, h_dim * 2),
+            discBlock(h_dim * 2, h_dim),
+            nn.Linear(h_dim, 1)
         )
 
     def forward(self, image):
         return self.disc(image)
 
+def calc_gen_loss(loss_func, gen, disc, noise):
+    fake = gen(noise)
+    pred = disc(fake)
+    targets = torch.ones_like(pred)
+    gen_loss = loss_func(pred, targets)
+    return gen_loss
+
+def calc_disc_loss(loss_func, gen, disc, real, noise):
+    fake = gen(noise)
+    disc_fake = disc(fake.detach())
+    disc_fake_targets = torch.zeros_like(disc_fake)
+    disc_fake_loss = loss_func(disc_fake, disc_fake_targets)
+
+    disc_real = disc(real)
+    disc_real_targets = torch.ones_like(disc_real)
+    disc_real_loss = loss_func(disc_real, disc_real_targets)
+
+    disc_loss = (disc_fake_loss + disc_real_loss) / 2
+    return disc_loss
+
 if __name__ == "__main__":
-    gen = Generator(z_dim=784).to(device)  # Adjust z_dim to match the flattened input size
+    gen = Generator(z_dim=img_hw).to(device)
     gen_opt = torch.optim.Adam(gen.parameters(), lr=lr)
     disc = Discriminator().to(device)
     disc_opt = torch.optim.Adam(disc.parameters(), lr=lr)
-
-    image_path = 'data/real/1.jpg'  # Path to face image
-    noise_path = 'data/noise/1.png'  # Path to eyes image
-
-    real = load_image_as_tensor(image_path).to(device).view(-1, 784)  # Flatten image
-    noise = load_noise_as_tensor(noise_path).to(device).view(-1, 784)  # Flatten image
-
+    n1 = 0
     for epoch in range(epochs):
-        ### Discriminator
-        disc_opt.zero_grad()
+        for i, (noise, real) in enumerate(dataloader):
+            noise = noise.view(-1, img_hw).to(device)
+            real = real.view(-1, img_hw).to(device)
 
-        disc_loss = calc_disc_loss(loss_func, gen, disc, len(real), real, z_dim, noise)
-        disc_loss.backward(retain_graph=True)
-        disc_opt.step()
+            ### Discriminator
+            disc_opt.zero_grad()
+            disc_loss = calc_disc_loss(loss_func, gen, disc, real, noise)
+            disc_loss.backward()
+            disc_opt.step()
 
-        ### Generator
-        gen_opt.zero_grad()
-        gen_loss = calc_gen_loss(loss_func, gen, disc, len(real), z_dim, noise)
-        gen_loss.backward()
-        gen_opt.step()
+            ### Generator
+            gen_opt.zero_grad()
+            gen_loss = calc_gen_loss(loss_func, gen, disc, noise)
+            gen_loss.backward()
+            gen_opt.step()
 
-        ### Visualization & Stats
-        mean_disc_loss += disc_loss.item() / info_step
-        mean_gen_loss += gen_loss.item() / info_step
+            ### Visualization & Stats
+            mean_disc_loss += disc_loss.item() / info_step
+            mean_gen_loss += gen_loss.item() / info_step
 
-        if cur_step % info_step == 0:
-            fake = gen(noise)
-            fname = 'output/' + str(cur_step) + '_fake.jpg'
-            rname = 'output/' + str(cur_step) + '_real.jpg'
-            show(fake, fname, size=(28, 28))  # Adjust size if needed
-            show(real, rname, size=(28, 28))
-            print(f"{epoch}: step {cur_step} / Gen loss: {mean_gen_loss} / disc_loss: {mean_disc_loss}")
-            mean_gen_loss, mean_disc_loss = 0, 0
+            if i % info_step == 0:
+                print(f"Epoch [{epoch+1}/{epochs}], Step [{i}/{len(dataloader)}], Gen Loss: {mean_gen_loss:.4f}, Disc Loss: {mean_disc_loss:.4f}")
+                mean_gen_loss, mean_disc_loss = 0, 0
+
+        # Save the last batch's generated images
+        fake = gen(noise).view(-1, 3, img_size, img_size).cpu()
+        real = real.view(-1, 3, img_size, img_size).cpu()
+        n1 = n1 + 1
+        fname = f'{n1}_fake_image_'
+        rname = f'{n1}_real_image_'
+        show(fake, fname, size=(img_size, img_size))
+        show(real, rname, size=(img_size, img_size))
 
         cur_step += 1

@@ -7,23 +7,29 @@ from PIL import Image
 import os
 from datetime import datetime
 
+#Hyperparameters:
+img_size = 128
+img_hw = 128*128
+
 # Parameters
-epochs = 500 # Number of complete passes over the dataset
+epochs = 20 # Number of complete passes over the dataset
 cur_step = 0
-info_step = 300  # Interval for printing information
+info_step = 5  # Interval for printing information
 mean_gen_loss = 0
 mean_disc_loss = 0
-z_dim = 784  # Latent space dimension
+z_dim = img_hw  # Latent space dimension
 lr = 0.00001
 loss_func = nn.BCEWithLogitsLoss()
 bs = 16  # Batch size
+
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 output_dir = f'output/output_{timestamp}/'
 os.makedirs(output_dir, exist_ok=True)
 
 # Visualization function
-def show(tensor_batch, prefix, size=(28, 28)):
+def show(tensor_batch, prefix, size=(img_size, img_size)):
     ''' Visualizes a batch of image tensors.
     Detach the tensor and store it inside CPU.
     '''
@@ -63,7 +69,7 @@ class FaceDataset(Dataset):
 
 # Transformations
 transform = transforms.Compose([
-    transforms.Resize((28, 28)),  # Resize to match model input size
+    transforms.Resize((img_size, img_size)),  # Resize to match model input size
     transforms.ToTensor(),  # Convert to PyTorch tensor
     transforms.Normalize((0.5,), (0.5,))  # Normalize to range [-1, 1]
 ])
@@ -90,7 +96,7 @@ def discBlock(inp, out):
     )
 
 class Generator(nn.Module):
-    def __init__(self, z_dim=784, i_dim=784, h_dim=128):
+    def __init__(self, z_dim=img_hw, i_dim=img_hw, h_dim=128):
         super().__init__()
         self.gen = nn.Sequential(
             genBlock(z_dim, h_dim),
@@ -105,7 +111,7 @@ class Generator(nn.Module):
         return self.gen(noise)
 
 class Discriminator(nn.Module):
-    def __init__(self, i_dim=784, h_dim=256):
+    def __init__(self, i_dim=img_hw, h_dim=256):
         super().__init__()
         self.disc = nn.Sequential(
             discBlock(i_dim, h_dim * 4),
@@ -138,15 +144,15 @@ def calc_disc_loss(loss_func, gen, disc, real, noise):
     return disc_loss
 
 if __name__ == "__main__":
-    gen = Generator(z_dim=784).to(device)
+    gen = Generator(z_dim=img_hw).to(device)
     gen_opt = torch.optim.Adam(gen.parameters(), lr=lr)
     disc = Discriminator().to(device)
     disc_opt = torch.optim.Adam(disc.parameters(), lr=lr)
     n1=0
     for epoch in range(epochs):
         for i, (noise, real) in enumerate(dataloader):
-            noise = noise.view(-1, 784).to(device)
-            real = real.view(-1, 784).to(device)
+            noise = noise.view(-1, img_hw).to(device)
+            real = real.view(-1, img_hw).to(device)
 
             ### Discriminator
             disc_opt.zero_grad()
@@ -169,12 +175,12 @@ if __name__ == "__main__":
                 mean_gen_loss, mean_disc_loss = 0, 0
 
         # Save the last batch's generated images
-        fake = gen(noise).view(-1, 1, 28, 28).cpu()
-        real = real.view(-1, 1, 28, 28).cpu()
+        fake = gen(noise).view(-1, 1, img_size, img_size).cpu()
+        real = real.view(-1, 1, img_size, img_size).cpu()
         n1=n1+1
         fname =  f'{n1}_fake_image_' 
         rname =  f'{n1}_real_image_' 
-        show(fake,  fname, size=(28, 28))
-        show(real, rname, size=(28, 28))
+        show(fake,  fname, size=(img_size, img_size))
+        show(real, rname, size=(img_size, img_size))
 
         cur_step += 1

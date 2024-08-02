@@ -7,20 +7,21 @@ from PIL import Image
 import os
 from datetime import datetime
 
-#Hyperparameters:
+# Hyperparameters:
 img_size = 128
-img_hw = 128*128
-
-# Parameters
-epochs = 20 # Number of complete passes over the dataset
-cur_step = 0
-info_step = 5  # Interval for printing information
-mean_gen_loss = 0
-mean_disc_loss = 0
-z_dim = img_hw  # Latent space dimension
+img_hw = img_size * img_size * 3  # For color images (3 channels)
+epochs = 500  # Number of complete passes over the dataset
+info_step = 300  # Interval for printing information
 lr = 0.00001
 loss_func = nn.BCEWithLogitsLoss()
 bs = 16  # Batch size
+
+# Parameters
+cur_step = 0
+mean_gen_loss = 0
+mean_disc_loss = 0
+z_dim = img_hw  # Latent space dimension
+
 
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -35,8 +36,8 @@ def show(tensor_batch, prefix, size=(img_size, img_size)):
     '''
     batch_size = tensor_batch.size(0)  # Get the number of images in the batch
     for i in range(batch_size):
-        single_image = tensor_batch[i].detach().cpu().view(1, *size)
-        plt.imshow(single_image.squeeze().numpy(), cmap="gray")
+        single_image = tensor_batch[i].detach().cpu().view(3, *size).permute(1, 2, 0)
+        plt.imshow(single_image.numpy() * 0.5 + 0.5)  # Unnormalize
         plt.axis('off')
         fname = str(output_dir) + f'{prefix}_{i}.jpg'
         plt.savefig(fname)  # Save each image with an index
@@ -58,8 +59,8 @@ class FaceDataset(Dataset):
         eyes_path = os.path.join(self.eyes_dir, self.eyes_images[idx])
         face_path = os.path.join(self.faces_dir, self.faces_images[idx])
 
-        eyes_image = Image.open(eyes_path).convert('L')
-        face_image = Image.open(face_path).convert('L')
+        eyes_image = Image.open(eyes_path).convert('RGB')  # Convert to RGB
+        face_image = Image.open(face_path).convert('RGB')  # Convert to RGB
 
         if self.transform:
             eyes_image = self.transform(eyes_image)
@@ -84,7 +85,8 @@ dataloader = DataLoader(dataset, batch_size=bs, shuffle=True)
 def genBlock(inp, out):
     return nn.Sequential(
         nn.Linear(inp, out),
-        nn.LayerNorm(out),  # Use LayerNorm instead of BatchNorm1d
+        nn.BatchNorm1d(out),
+        # nn.LayerNorm(out),  # Use LayerNorm instead of BatchNorm1d
         nn.ReLU(inplace=True)
     )
 
@@ -148,7 +150,7 @@ if __name__ == "__main__":
     gen_opt = torch.optim.Adam(gen.parameters(), lr=lr)
     disc = Discriminator().to(device)
     disc_opt = torch.optim.Adam(disc.parameters(), lr=lr)
-    n1=0
+    n1 = 0
     for epoch in range(epochs):
         for i, (noise, real) in enumerate(dataloader):
             noise = noise.view(-1, img_hw).to(device)
@@ -175,12 +177,12 @@ if __name__ == "__main__":
                 mean_gen_loss, mean_disc_loss = 0, 0
 
         # Save the last batch's generated images
-        fake = gen(noise).view(-1, 1, img_size, img_size).cpu()
-        real = real.view(-1, 1, img_size, img_size).cpu()
-        n1=n1+1
-        fname =  f'{n1}_fake_image_' 
-        rname =  f'{n1}_real_image_' 
-        show(fake,  fname, size=(img_size, img_size))
+        fake = gen(noise).view(-1, 3, img_size, img_size).cpu()
+        real = real.view(-1, 3, img_size, img_size).cpu()
+        n1 = n1 + 1
+        fname = f'{n1}_fake_image_'
+        rname = f'{n1}_real_image_'
+        show(fake, fname, size=(img_size, img_size))
         show(real, rname, size=(img_size, img_size))
 
         cur_step += 1
